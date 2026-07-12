@@ -15,7 +15,7 @@ const ADMIN_EMAILS: string[] = [];
 
 // Thông tin thương hiệu LMS
 const BRAND = {
-  name: 'LMS Thầy Phúc',
+  name: 'LMS ÁNH SÁNG TRI THỨC 1999',
   tagline: 'Hệ thống học tập & thi trực tuyến',
   primaryColor: '#1e3a5f',
   accentColor: '#f59e0b',
