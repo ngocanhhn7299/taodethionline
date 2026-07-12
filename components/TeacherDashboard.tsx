@@ -770,9 +770,9 @@ const handleReviewConfirm = (updatedExamData: ExamData) => {
     setExportingExamId(exam.id);
     try {
       if (withAnswers) {
-        await exportExamWithAnswers(exam, user.name, 'LMS Thầy Phúc');
+        await exportExamWithAnswers(exam, user.name, 'LMS ÁNH SÁNG TRI THỨC 1999');
       } else {
-        await exportExamOnly(exam, user.name, 'LMS Thầy Phúc');
+        await exportExamOnly(exam, user.name, 'LMS ÁNH SÁNG TRI THỨC 199');
       }
     } catch (err) {
       alert('❌ Lỗi xuất Word: ' + (err as Error).message + '\n\nHãy chắc chắn đã cài: npm install docx');
