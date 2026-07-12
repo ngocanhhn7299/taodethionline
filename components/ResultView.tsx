@@ -20,11 +20,75 @@ const escapeHtml = (s: string) =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
+
+const getImageSrc = (base64?: string, contentType?: string): string => {
+  if (!base64) return '';
+  return `data:${contentType || 'image/png'};base64,${base64}`;
+};
+
+/**
+ * Khối lời giải dùng chung cho mọi loại câu hỏi.
+ * - Giữ nguyên xuống dòng thông qua MathText block.
+ * - Hiển thị ảnh được parser tách riêng vào question.solutionImages.
+ * - Vẫn hiện khối lời giải khi chỉ có ảnh mà không có văn bản.
+ */
+const SolutionBlock: React.FC<{
+  question: Question;
+  showExplanations: boolean;
+}> = ({ question, showExplanations }) => {
+  const solutionText = question.solution?.trim() || '';
+  const solutionImages = (question.solutionImages || []).filter((img) => Boolean(img.base64));
+
+  if (!showExplanations || (!solutionText && solutionImages.length === 0)) return null;
+
+  return (
+    <div className="mt-3 overflow-hidden rounded-xl border border-blue-200 bg-blue-50">
+      <div className="flex items-center gap-2 border-b border-blue-200 bg-blue-100/70 px-3 py-2">
+        <span aria-hidden="true">💡</span>
+        <span className="text-sm font-bold text-blue-700">Lời giải</span>
+      </div>
+
+      <div className="space-y-3 p-3">
+        {solutionText && (
+          <div className="text-sm leading-7 text-gray-700">
+            <MathText html={solutionText} block />
+          </div>
+        )}
+
+        {solutionImages.length > 0 && (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {solutionImages.map((img, idx) => {
+              const src = getImageSrc(img.base64, img.contentType);
+              return (
+                <figure
+                  key={`${img.id || img.filename || 'solution-image'}-${idx}`}
+                  className="overflow-hidden rounded-lg border border-blue-200 bg-white p-2 shadow-sm"
+                >
+                  <img
+                    src={src}
+                    alt={`Hình lời giải ${idx + 1}`}
+                    loading="lazy"
+                    className="mx-auto block max-h-80 max-w-full object-contain"
+                  />
+                  {solutionImages.length > 1 && (
+                    <figcaption className="mt-2 text-center text-xs text-gray-500">
+                      Hình lời giải {idx + 1}
+                    </figcaption>
+                  )}
+                </figure>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const ResultView: React.FC<ResultViewProps> = ({
   submission,
   room,
   exam,
-  showAnswers = true, // deprecated
   onExit,
   onRetry
 }) => {
@@ -448,17 +512,7 @@ const MultipleChoiceReview: React.FC<{
             </div>
           )}
 
-          {/* ✅ Lời giải chi tiết (nếu được phép) */}
-          {showExplanations && question.solution && (
-            <div className="mt-3 p-3 bg-blue-50 border-l-4 border-blue-500 rounded">
-              <div className="flex items-start gap-2">
-                <span className="text-blue-600 font-bold text-sm">💡 Lời giải:</span>
-                <div className="flex-1 text-sm text-gray-700">
-                  <MathText html={question.solution} block />
-                </div>
-              </div>
-            </div>
-          )}
+          <SolutionBlock question={question} showExplanations={showExplanations} />
         </div>
       </div>
     </div>
@@ -598,17 +652,7 @@ const TrueFalseReview: React.FC<{
             </div>
           )}
 
-          {/* ✅ Lời giải chi tiết (nếu được phép) */}
-          {showExplanations && question.solution && (
-            <div className="mt-3 p-3 bg-blue-50 border-l-4 border-blue-500 rounded">
-              <div className="flex items-start gap-2">
-                <span className="text-blue-600 font-bold text-sm">💡 Lời giải:</span>
-                <div className="flex-1 text-sm text-gray-700">
-                  <MathText html={question.solution} block />
-                </div>
-              </div>
-            </div>
-          )}
+          <SolutionBlock question={question} showExplanations={showExplanations} />
         </div>
       </div>
     </div>
@@ -682,17 +726,7 @@ const ShortAnswerReview: React.FC<{
             )}
           </div>
 
-          {/* ✅ Lời giải chi tiết (nếu được phép) */}
-          {showExplanations && question.solution && (
-            <div className="mt-3 p-3 bg-blue-50 border-l-4 border-blue-500 rounded">
-              <div className="flex items-start gap-2">
-                <span className="text-blue-600 font-bold text-sm">💡 Lời giải:</span>
-                <div className="flex-1 text-sm text-gray-700">
-                  <MathText html={question.solution} block />
-                </div>
-              </div>
-            </div>
-          )}
+          <SolutionBlock question={question} showExplanations={showExplanations} />
         </div>
       </div>
     </div>

@@ -1,11 +1,11 @@
-// src/components/TeacherDashboard.tsx
+// components/TeacherDashboard.tsx
 
 import React, { useEffect, useState } from 'react';
 import { User, Exam, Room, Submission, Class, ExamData, ExamPointsConfig, Question } from '../types';
 import {
   createExam,
   getExamsByTeacher,
-  deleteExam,
+  deleteExams,
   createRoom,
   getRoomsByTeacher,
   updateRoomStatus,
@@ -115,11 +115,31 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogout }) =
   // ✅ MỚI: Export Word loading
   const [exportingExamId, setExportingExamId] = useState<string | null>(null);
 
+  // ✅ Chọn và xóa nhiều đề thi
+  const [selectedExamIds, setSelectedExamIds] = useState<string[]>([]);
+  const [isBulkDeletingExams, setIsBulkDeletingExams] = useState(false);
+
+  // ✅ MỚI: Chọn và xóa nhiều phòng thi
+  const [selectedRoomIds, setSelectedRoomIds] = useState<string[]>([]);
+  const [isBulkDeletingRooms, setIsBulkDeletingRooms] = useState(false);
+
   // Load data
   useEffect(() => {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user.id]);
+
+  // Khi danh sách đề thay đổi, tự bỏ các ID không còn tồn tại.
+  useEffect(() => {
+    const validExamIds = new Set(exams.map((exam) => exam.id));
+    setSelectedExamIds((previous) => previous.filter((id) => validExamIds.has(id)));
+  }, [exams]);
+
+  // Khi danh sách phòng thay đổi, tự bỏ các ID không còn tồn tại.
+  useEffect(() => {
+    const validRoomIds = new Set(rooms.map((room) => room.id));
+    setSelectedRoomIds((previous) => previous.filter((id) => validRoomIds.has(id)));
+  }, [rooms]);
 
   // Subscribe to submissions when a room is selected
   useEffect(() => {
@@ -457,15 +477,225 @@ const handleReviewConfirm = (updatedExamData: ExamData) => {
     }
   };
 
+  const getLinkedRoomsForExam = (examId: string): Room[] => {
+    return rooms.filter((room) => room.examId === examId);
+  };
+
+  const toggleExamSelection = (examId: string) => {
+    setSelectedExamIds((previous) =>
+      previous.includes(examId)
+        ? previous.filter((id) => id !== examId)
+        : [...previous, examId]
+    );
+  };
+
+  const toggleSelectAllExams = () => {
+    const allSelected = exams.length > 0 && exams.every((exam) => selectedExamIds.includes(exam.id));
+    setSelectedExamIds(allSelected ? [] : exams.map((exam) => exam.id));
+  };
+
   const handleDeleteExam = async (examId: string) => {
+    const linkedRooms = getLinkedRoomsForExam(examId);
+    if (linkedRooms.length > 0) {
+      alert(
+        `⚠️ Không thể xóa đề này vì đang được sử dụng bởi ${linkedRooms.length} phòng thi.
+
+` +
+          'Hãy xóa các phòng thi liên quan trước rồi xóa đề.'
+      );
+      return;
+    }
+
     if (!confirm('Bạn có chắc muốn xóa đề thi này?')) return;
 
+    setIsBulkDeletingExams(true);
     try {
-      await deleteExam(examId);
-      loadData();
+      const result = await deleteExams([examId], user.id);
+
+      if (result.deletedIds.length > 0) {
+        setSelectedExamIds((previous) => previous.filter((id) => id !== examId));
+        await loadData();
+        return;
+      }
+
+      if (result.forbiddenIds.length > 0) {
+        alert('❌ Bạn không có quyền xóa đề thi này.');
+      } else if (result.notFoundIds.length > 0) {
+        alert('⚠️ Đề thi không còn tồn tại hoặc đã được xóa trước đó.');
+        await loadData();
+      } else {
+        alert('❌ Không thể xóa đề thi: ' + (result.failed[0]?.message || 'Lỗi không xác định'));
+      }
     } catch (err) {
       console.error('Delete exam error:', err);
       alert('❌ Lỗi khi xóa đề thi');
+    } finally {
+      setIsBulkDeletingExams(false);
+    }
+  };
+
+  const handleBulkDeleteExams = async () => {
+    if (selectedExamIds.length === 0) return;
+
+    const selectedSet = new Set(selectedExamIds);
+    const selectedExams = exams.filter((exam) => selectedSet.has(exam.id));
+    const blockedExams = selectedExams
+      .map((exam) => ({
+        exam,
+        roomCount: getLinkedRoomsForExam(exam.id).length
+      }))
+      .filter((item) => item.roomCount > 0);
+
+    const blockedIds = new Set(blockedExams.map((item) => item.exam.id));
+    const deletableIds = selectedExamIds.filter((id) => !blockedIds.has(id));
+
+    if (deletableIds.length === 0) {
+      alert(
+        `⚠️ ${blockedExams.length} đề đã chọn đang được sử dụng bởi phòng thi nên chưa thể xóa.
+
+` +
+          'Hãy xóa các phòng thi liên quan trước.'
+      );
+      return;
+    }
+
+    const confirmText =
+      `Bạn có chắc muốn xóa ${deletableIds.length} đề thi đã chọn?
+
+` +
+      (blockedExams.length > 0
+        ? `⚠️ Có ${blockedExams.length} đề đang được dùng bởi phòng thi và sẽ được giữ lại.
+
+`
+        : '') +
+      'Thao tác này không thể hoàn tác.';
+
+    if (!confirm(confirmText)) return;
+
+    setIsBulkDeletingExams(true);
+    try {
+      const result = await deleteExams(deletableIds, user.id);
+      const retainedIds = new Set([
+        ...blockedIds,
+        ...result.forbiddenIds,
+        ...result.failed.map((item) => item.examId)
+      ]);
+
+      setSelectedExamIds((previous) => previous.filter((id) => retainedIds.has(id)));
+      await loadData();
+
+      const summary: string[] = [];
+      if (result.deletedIds.length > 0) {
+        summary.push(`✅ Đã xóa ${result.deletedIds.length} đề thi.`);
+      }
+      if (blockedExams.length > 0) {
+        summary.push(`⚠️ Giữ lại ${blockedExams.length} đề đang có phòng thi.`);
+      }
+      if (result.notFoundIds.length > 0) {
+        summary.push(`ℹ️ ${result.notFoundIds.length} đề không còn tồn tại.`);
+      }
+      if (result.forbiddenIds.length > 0) {
+        summary.push(`⛔ Không có quyền xóa ${result.forbiddenIds.length} đề.`);
+      }
+      if (result.failed.length > 0) {
+        summary.push(`❌ Có ${result.failed.length} đề xóa thất bại.`);
+      }
+
+      alert(summary.join('\n'));
+    } catch (err) {
+      console.error('Bulk delete exams error:', err);
+      alert('❌ Lỗi khi xóa nhiều đề thi.');
+    } finally {
+      setIsBulkDeletingExams(false);
+    }
+  };
+
+  const toggleRoomSelection = (roomId: string) => {
+    setSelectedRoomIds((previous) =>
+      previous.includes(roomId)
+        ? previous.filter((id) => id !== roomId)
+        : [...previous, roomId]
+    );
+  };
+
+  const toggleSelectAllRooms = () => {
+    const allSelected = rooms.length > 0 && rooms.every((room) => selectedRoomIds.includes(room.id));
+    setSelectedRoomIds(allSelected ? [] : rooms.map((room) => room.id));
+  };
+
+  const clearDeletedRoomViewState = (deletedIds: Set<string>) => {
+    if (selectedRoom && deletedIds.has(selectedRoom.id)) {
+      setSelectedRoom(null);
+      setSubmissions([]);
+      setSelectedSubmission(null);
+      setCurrentExam(null);
+    }
+
+    if (monitoringRoom && deletedIds.has(monitoringRoom.id)) {
+      setMonitoringRoom(null);
+    }
+  };
+
+  const handleBulkDeleteRooms = async () => {
+    if (selectedRoomIds.length === 0 || isBulkDeletingRooms) return;
+
+    const selectedSet = new Set(selectedRoomIds);
+    const selectedRooms = rooms.filter((room) => selectedSet.has(room.id));
+    const totalSubmissions = selectedRooms.reduce(
+      (sum, room) => sum + (room.submittedCount || 0),
+      0
+    );
+
+    const confirmText =
+      `Bạn có chắc muốn xóa ${selectedRooms.length} phòng thi đã chọn?\n\n` +
+      `⚠️ Toàn bộ bài làm trong các phòng này cũng sẽ bị xóa vĩnh viễn` +
+      (totalSubmissions > 0 ? ` (${totalSubmissions} bài đã nộp).` : '.') +
+      `\n\nThao tác này không thể hoàn tác.`;
+
+    if (!confirm(confirmText)) return;
+
+    setIsBulkDeletingRooms(true);
+    const deletedIds: string[] = [];
+    const failed: Array<{ roomId: string; title: string; message: string }> = [];
+
+    try {
+      // Xóa tuần tự để tránh tạo quá nhiều truy vấn/xóa Firestore cùng lúc.
+      for (const room of selectedRooms) {
+        try {
+          await deleteRoom(room.id);
+          deletedIds.push(room.id);
+        } catch (error) {
+          failed.push({
+            roomId: room.id,
+            title: room.examTitle,
+            message: error instanceof Error ? error.message : 'Lỗi không xác định'
+          });
+        }
+      }
+
+      const deletedSet = new Set(deletedIds);
+      clearDeletedRoomViewState(deletedSet);
+
+      // Chỉ giữ tick ở những phòng xóa thất bại để người dùng có thể thử lại.
+      const failedIds = new Set(failed.map((item) => item.roomId));
+      setSelectedRoomIds((previous) => previous.filter((id) => failedIds.has(id)));
+
+      await loadData();
+
+      const summary: string[] = [];
+      if (deletedIds.length > 0) {
+        summary.push(`✅ Đã xóa ${deletedIds.length} phòng thi và toàn bộ bài làm liên quan.`);
+      }
+      if (failed.length > 0) {
+        summary.push(`❌ Có ${failed.length} phòng xóa thất bại và vẫn được giữ trạng thái đã chọn.`);
+      }
+
+      alert(summary.join('\n'));
+    } catch (err) {
+      console.error('Bulk delete rooms error:', err);
+      alert('❌ Lỗi khi xóa nhiều phòng thi.');
+    } finally {
+      setIsBulkDeletingRooms(false);
     }
   };
 
@@ -475,12 +705,8 @@ const handleReviewConfirm = (updatedExamData: ExamData) => {
         if (!confirm('Bạn có chắc muốn xóa phòng thi này? Tất cả bài làm sẽ bị xóa.')) return;
         await deleteRoom(roomId);
 
-        if (selectedRoom?.id === roomId) {
-          setSelectedRoom(null);
-          setSubmissions([]);
-          setSelectedSubmission(null);
-          setCurrentExam(null);
-        }
+        setSelectedRoomIds((previous) => previous.filter((id) => id !== roomId));
+        clearDeletedRoomViewState(new Set([roomId]));
       } else {
         await updateRoomStatus(roomId, action === 'start' ? 'active' : 'closed');
       }
@@ -661,6 +887,54 @@ const handleReviewConfirm = (updatedExamData: ExamData) => {
                   </label>
                 </div>
 
+                {exams.length > 0 && (
+                  <div className="bg-white rounded-xl p-4 shadow-md mb-4 border border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-4 flex-wrap">
+                      <label className="inline-flex items-center gap-2 cursor-pointer select-none font-semibold text-gray-700">
+                        <input
+                          type="checkbox"
+                          checked={exams.length > 0 && exams.every((exam) => selectedExamIds.includes(exam.id))}
+                          onChange={toggleSelectAllExams}
+                          className="w-5 h-5 accent-teal-600 cursor-pointer"
+                          aria-label="Chọn tất cả đề thi"
+                        />
+                        Chọn tất cả
+                      </label>
+
+                      <span className="text-sm text-gray-500">
+                        Đã chọn <strong className="text-teal-700">{selectedExamIds.length}</strong>/{exams.length} đề
+                      </span>
+
+                      {selectedExamIds.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedExamIds([])}
+                          disabled={isBulkDeletingExams}
+                          className="text-sm font-medium text-gray-500 hover:text-gray-800 disabled:opacity-50"
+                        >
+                          Bỏ chọn
+                        </button>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleBulkDeleteExams}
+                      disabled={selectedExamIds.length === 0 || isBulkDeletingExams}
+                      className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-red-600 text-white rounded-xl font-semibold hover:bg-red-700 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {isBulkDeletingExams ? (
+                        <>
+                          <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                          Đang xóa...
+                        </>
+                      ) : (
+                        <>🗑️ Xóa các đề đã chọn</>
+                      )}
+                    </button>
+                  </div>
+                )}
+
                 <div className="grid gap-4">
                   {exams.length === 0 ? (
                     <div className="bg-white rounded-2xl p-12 text-center">
@@ -671,11 +945,29 @@ const handleReviewConfirm = (updatedExamData: ExamData) => {
                     exams.map((exam) => {
                       const counts = getQuestionTypeCounts(exam);
                       const isExporting = exportingExamId === exam.id;
+                      const isSelected = selectedExamIds.includes(exam.id);
                       return (
-                        <div key={exam.id} className="bg-white rounded-xl p-5 shadow-md hover:shadow-lg transition">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                              <div className="w-12 h-12 bg-teal-100 rounded-xl flex items-center justify-center text-2xl">
+                        <div
+                          key={exam.id}
+                          className={`bg-white rounded-xl p-5 shadow-md hover:shadow-lg transition border-2 ${
+                            isSelected ? 'border-teal-500 ring-2 ring-teal-100' : 'border-transparent'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-4 min-w-0">
+                              <label
+                                className="flex items-center justify-center cursor-pointer self-stretch px-1"
+                                title={isSelected ? 'Bỏ chọn đề này' : 'Chọn đề này'}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => toggleExamSelection(exam.id)}
+                                  className="w-5 h-5 accent-teal-600 cursor-pointer"
+                                  aria-label={`Chọn đề ${exam.title}`}
+                                />
+                              </label>
+                              <div className="w-12 h-12 bg-teal-100 rounded-xl flex items-center justify-center text-2xl flex-shrink-0">
                                 📄
                               </div>
                               <div>
@@ -721,7 +1013,8 @@ const handleReviewConfirm = (updatedExamData: ExamData) => {
                                 </button>
                                 <button
                                   onClick={() => handleDeleteExam(exam.id)}
-                                  className="px-4 py-2 bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition text-sm font-medium"
+                                  disabled={isBulkDeletingExams}
+                                  className="px-4 py-2 bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                   🗑️
                                 </button>
@@ -764,10 +1057,71 @@ const handleReviewConfirm = (updatedExamData: ExamData) => {
                     <p className="text-gray-500">Chưa có phòng thi nào. Tạo phòng từ đề thi!</p>
                   </div>
                 ) : (
-                  rooms.map((room) => (
-                    <div key={room.id} className="bg-white rounded-xl p-5 shadow-md">
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-4">
+                  <>
+                    {/* Thanh chọn và xóa nhiều phòng thi */}
+                    <div className="bg-white rounded-xl p-4 shadow-md border border-teal-100 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={rooms.length > 0 && rooms.every((room) => selectedRoomIds.includes(room.id))}
+                            onChange={toggleSelectAllRooms}
+                            disabled={isBulkDeletingRooms}
+                            className="w-5 h-5 accent-teal-600"
+                          />
+                          <span className="font-semibold text-gray-700">Chọn tất cả</span>
+                        </label>
+                        <span className="text-sm text-gray-500">
+                          Đã chọn <strong className="text-teal-700">{selectedRoomIds.length}</strong>/{rooms.length} phòng
+                        </span>
+                        {selectedRoomIds.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedRoomIds([])}
+                            disabled={isBulkDeletingRooms}
+                            className="text-sm font-medium text-gray-500 hover:text-gray-800 disabled:opacity-50"
+                          >
+                            Bỏ chọn
+                          </button>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleBulkDeleteRooms}
+                        disabled={selectedRoomIds.length === 0 || isBulkDeletingRooms}
+                        className="px-5 py-2.5 bg-red-600 text-white rounded-xl font-semibold hover:bg-red-700 transition disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
+                      >
+                        {isBulkDeletingRooms ? (
+                          <>
+                            <span className="w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                            Đang xóa...
+                          </>
+                        ) : (
+                          <>🗑️ Xóa các phòng đã chọn</>
+                        )}
+                      </button>
+                    </div>
+
+                    {rooms.map((room) => {
+                      const isSelected = selectedRoomIds.includes(room.id);
+                      return (
+                    <div
+                      key={room.id}
+                      className={`bg-white rounded-xl p-5 shadow-md border-2 transition ${
+                        isSelected ? 'border-teal-500 ring-2 ring-teal-100' : 'border-transparent'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
+                        <div className="flex items-center gap-4 min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleRoomSelection(room.id)}
+                            disabled={isBulkDeletingRooms}
+                            aria-label={`Chọn phòng ${room.code} - ${room.examTitle}`}
+                            className="w-5 h-5 accent-teal-600 flex-shrink-0"
+                          />
                           <div
                             className={`w-12 h-12 rounded-xl flex items-center justify-center text-2xl ${
                               room.status === 'active'
@@ -917,14 +1271,17 @@ const handleReviewConfirm = (updatedExamData: ExamData) => {
                           </button>
                           <button
                             onClick={() => handleRoomAction(room.id, 'delete')}
-                            className="px-4 py-2 bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition text-sm font-medium"
+                            disabled={isBulkDeletingRooms}
+                            className="px-4 py-2 bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             🗑️
                           </button>
                         </div>
                       </div>
                     </div>
-                  ))
+                      );
+                    })}
+                  </>
                 )}
               </div>
             )}

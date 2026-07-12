@@ -31,14 +31,15 @@ import { Exam, Room, Submission, StudentInfo, User, Role, Question, Class, Class
 import { calculateScore, getTotalCorrectCount, getTotalWrongCount } from './scoringService';
 
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: "AIzaSyA4T0Pfl2qaNw0LOfXUJgXGHvVhv4BA9tc",
-  authDomain: "taodethionlinet7.firebaseapp.com",
-  projectId: "taodethionlinet7",
-  storageBucket: "taodethionlinet7.firebasestorage.app",
-  messagingSenderId: "474245596664",
-  appId: "1:474245596664:web:da6fcfe0e8fbd19aa5420d",
-  measurementId: "G-MT6T8M4RMD"
+  apiKey: "AIzaSyC6uJjBQwX7wqffDxMiYaLWGw2CO3AWoos",
+  authDomain: "taodeword2104-2f27c.firebaseapp.com",
+  projectId: "taodeword2104-2f27c",
+  storageBucket: "taodeword2104-2f27c.firebasestorage.app",
+  messagingSenderId: "703777386384",
+  appId: "1:703777386384:web:e6db7f7963b56de4becd15",
+  measurementId: "G-0XJ2YLHL19"
 };
 
 // Initialize Firebase
@@ -95,63 +96,70 @@ const removeAllBase64 = (obj: any): any => {
   
 };
 
-// ✅ MỚI: Tách hình ảnh base64 ra khỏi exam data (tránh vượt 1MB Firestore limit)
-const extractImagesFromExam = (examData: any): {
-  strippedData: any;
-  imageDocuments: { questionNumber: number; imageIndex: number; id: string; filename: string; base64: string; contentType: string }[];
-} => {
-  const imageDocuments: any[] = [];
+// ✅ Tách toàn bộ ảnh base64 ra subcollection để tránh vượt giới hạn 1MB.
+// Hỗ trợ riêng ảnh câu hỏi (question), ảnh lời giải (solution) và ảnh cấp đề (exam).
+type ExamImageRole = 'question' | 'solution' | 'exam';
 
-  // Tách base64 từ questions[].images[]
-  const strippedQuestions = (examData.questions || []).map((q: any) => {
-    if (!q.images || q.images.length === 0) return q;
+type ExamImageDocument = {
+  questionNumber: number;
+  imageIndex: number;
+  imageRole: ExamImageRole;
+  id: string;
+  filename: string;
+  base64: string;
+  contentType: string;
+  rId?: string;
+  tikzSource?: string;
+};
 
-    const strippedImages = q.images.map((img: any, idx: number) => {
-      if (img.base64 && img.base64.length > 0) {
-        // Lưu vào danh sách để ghi subcollection
-        imageDocuments.push({
-          questionNumber: q.number,
-          imageIndex: idx,
-          id: img.id || `img_${idx}`,
-          filename: img.filename || `image${idx}.png`,
-          base64: img.base64,
-          contentType: img.contentType || 'image/png'
-        });
+const stripImageList = (
+  imageList: any[] | undefined,
+  questionNumber: number,
+  imageRole: ExamImageRole,
+  imageDocuments: ExamImageDocument[]
+): any[] => {
+  return (imageList || []).map((img: any, idx: number) => {
+    const metadata = {
+      id: img.id || `${imageRole}_img_${idx}`,
+      filename: img.filename || `${imageRole}_image${idx}.png`,
+      contentType: img.contentType || 'image/png',
+      ...(img.rId ? { rId: img.rId } : {}),
+      ...(img.tikzSource ? { tikzSource: img.tikzSource } : {})
+    };
 
-        // Giữ lại metadata, XÓA base64
-        return {
-          id: img.id || `img_${idx}`,
-          filename: img.filename || `image${idx}.png`,
-          contentType: img.contentType || 'image/png'
-          // ❌ KHÔNG có base64
-        };
-      }
-      return img;
-    });
-
-    return { ...q, images: strippedImages };
-  });
-
-  // Tách base64 từ exam-level images[]
-  const strippedExamImages = (examData.images || []).map((img: any, idx: number) => {
     if (img.base64 && img.base64.length > 0) {
       imageDocuments.push({
-        questionNumber: 0, // exam-level
+        questionNumber,
         imageIndex: idx,
-        id: img.id || `exam_img_${idx}`,
-        filename: img.filename || `exam_image${idx}.png`,
-        base64: img.base64,
-        contentType: img.contentType || 'image/png'
+        imageRole,
+        ...metadata,
+        base64: img.base64
       });
-
-      return {
-        id: img.id || `exam_img_${idx}`,
-        filename: img.filename || `exam_image${idx}.png`,
-        contentType: img.contentType || 'image/png'
-      };
     }
-    return img;
+
+    // Chỉ giữ metadata trong document đề; base64 được lưu ở subcollection.
+    return metadata;
   });
+};
+
+const extractImagesFromExam = (examData: any): {
+  strippedData: any;
+  imageDocuments: ExamImageDocument[];
+} => {
+  const imageDocuments: ExamImageDocument[] = [];
+
+  const strippedQuestions = (examData.questions || []).map((q: any) => ({
+    ...q,
+    images: stripImageList(q.images, q.number, 'question', imageDocuments),
+    solutionImages: stripImageList(q.solutionImages, q.number, 'solution', imageDocuments)
+  }));
+
+  const strippedExamImages = stripImageList(
+    examData.images,
+    0,
+    'exam',
+    imageDocuments
+  );
 
   return {
     strippedData: {
@@ -163,60 +171,73 @@ const extractImagesFromExam = (examData: any): {
   };
 };
 
-// ✅ MỚI: Load hình ảnh từ subcollection và gắn lại vào questions
+// ✅ Load ảnh từ subcollection, ghép các chunk và gắn lại đúng vị trí.
+// Document cũ chưa có imageRole vẫn được hiểu là ảnh câu hỏi (hoặc ảnh cấp đề khi questionNumber = 0).
 const mergeImagesIntoExam = (examData: any, imageDocs: any[]): any => {
   if (!imageDocs || imageDocs.length === 0) return examData;
 
-  // ✅ Ghép chunks lại thành base64 hoàn chỉnh
+  const getRole = (imageDoc: any): ExamImageRole => {
+    if (imageDoc.imageRole === 'solution') return 'solution';
+    if (imageDoc.imageRole === 'exam' || imageDoc.questionNumber === 0) return 'exam';
+    return 'question';
+  };
+
   const imageMap = new Map<string, any[]>();
-  for (const doc of imageDocs) {
-    const key = `${doc.questionNumber}_${doc.imageIndex}_${doc.id}`;
+  for (const imageDoc of imageDocs) {
+    const role = getRole(imageDoc);
+    const key = `${role}_${imageDoc.questionNumber}_${imageDoc.imageIndex}_${imageDoc.id}`;
     if (!imageMap.has(key)) imageMap.set(key, []);
-    imageMap.get(key)!.push(doc);
+    imageMap.get(key)!.push(imageDoc);
   }
 
   const assembledImages: any[] = [];
   for (const [, chunks] of imageMap) {
     chunks.sort((a: any, b: any) => (a.chunkIndex || 0) - (b.chunkIndex || 0));
-    const fullBase64 = chunks.map((c: any) => c.base64 || '').join('');
+    const first = chunks[0];
     assembledImages.push({
-      questionNumber: chunks[0].questionNumber,
-      imageIndex: chunks[0].imageIndex,
-      id: chunks[0].id,
-      filename: chunks[0].filename,
-      base64: fullBase64,
-      contentType: chunks[0].contentType || 'image/png'
+      questionNumber: first.questionNumber,
+      imageIndex: first.imageIndex,
+      imageRole: getRole(first),
+      id: first.id,
+      filename: first.filename,
+      base64: chunks.map((chunk: any) => chunk.base64 || '').join(''),
+      contentType: first.contentType || 'image/png',
+      ...(first.rId ? { rId: first.rId } : {}),
+      ...(first.tikzSource ? { tikzSource: first.tikzSource } : {})
     });
   }
 
-  const questions = (examData.questions || []).map((q: any) => {
-    const qImages = assembledImages
-      .filter((img: any) => img.questionNumber === q.number)
-      .sort((a: any, b: any) => (a.imageIndex || 0) - (b.imageIndex || 0));
+  const toImageData = (img: any) => ({
+    id: img.id,
+    filename: img.filename,
+    base64: img.base64,
+    contentType: img.contentType,
+    ...(img.rId ? { rId: img.rId } : {}),
+    ...(img.tikzSource ? { tikzSource: img.tikzSource } : {})
+  });
 
-    if (qImages.length > 0) {
-      return {
-        ...q,
-        images: qImages.map((img: any) => ({
-          id: img.id,
-          filename: img.filename,
-          base64: img.base64,
-          contentType: img.contentType
-        }))
-      };
-    }
-    return q;
+  const questions = (examData.questions || []).map((q: any) => {
+    const questionImages = assembledImages
+      .filter((img: any) => img.imageRole === 'question' && img.questionNumber === q.number)
+      .sort((a: any, b: any) => (a.imageIndex || 0) - (b.imageIndex || 0))
+      .map(toImageData);
+
+    const solutionImages = assembledImages
+      .filter((img: any) => img.imageRole === 'solution' && img.questionNumber === q.number)
+      .sort((a: any, b: any) => (a.imageIndex || 0) - (b.imageIndex || 0))
+      .map(toImageData);
+
+    return {
+      ...q,
+      images: questionImages.length > 0 ? questionImages : (q.images || []),
+      solutionImages: solutionImages.length > 0 ? solutionImages : (q.solutionImages || [])
+    };
   });
 
   const examImages = assembledImages
-    .filter((img: any) => img.questionNumber === 0)
+    .filter((img: any) => img.imageRole === 'exam')
     .sort((a: any, b: any) => (a.imageIndex || 0) - (b.imageIndex || 0))
-    .map((img: any) => ({
-      id: img.id,
-      filename: img.filename,
-      base64: img.base64,
-      contentType: img.contentType
-    }));
+    .map(toImageData);
 
   return {
     ...examData,
@@ -1036,23 +1057,84 @@ export const getExamsByTeacher = async (teacherId: string): Promise<Exam[]> => {
   return exams;
 };
 
-// ✅✅✅ SỬA: Xóa exam + subcollection images ✅✅✅
-export const deleteExam = async (examId: string): Promise<void> => {
-  // Xóa subcollection images trước
-  try {
-    const imagesSnap = await getDocs(collection(db, 'exams', examId, 'images'));
-    if (!imagesSnap.empty) {
-      const batch = writeBatch(db);
-      imagesSnap.docs.forEach((d) => batch.delete(d.ref));
-      await batch.commit();
-      console.log(`🗑️ Deleted ${imagesSnap.size} images from subcollection`);
-    }
-  } catch (err) {
-    console.warn('Failed to delete images subcollection:', err);
+// ✅ Xóa toàn bộ document trong subcollection images theo từng batch an toàn.
+// Firestore giới hạn tối đa 500 thao tác trong một batch, dùng 450 để chừa biên an toàn.
+const deleteExamImages = async (examId: string): Promise<void> => {
+  const imagesSnap = await getDocs(collection(db, 'exams', examId, 'images'));
+  if (imagesSnap.empty) return;
+
+  const docs = imagesSnap.docs;
+  const BATCH_SIZE = 450;
+
+  for (let start = 0; start < docs.length; start += BATCH_SIZE) {
+    const batch = writeBatch(db);
+    docs.slice(start, start + BATCH_SIZE).forEach((imageDoc) => {
+      batch.delete(imageDoc.ref);
+    });
+    await batch.commit();
   }
 
-  // Xóa document chính
+  console.log(`🗑️ Deleted ${imagesSnap.size} images from subcollection`);
+};
+
+// ✅ Xóa một đề thi và toàn bộ ảnh trong subcollection.
+export const deleteExam = async (examId: string): Promise<void> => {
+  await deleteExamImages(examId);
   await deleteDoc(doc(db, 'exams', examId));
+};
+
+export interface BulkDeleteExamsResult {
+  deletedIds: string[];
+  notFoundIds: string[];
+  forbiddenIds: string[];
+  failed: Array<{
+    examId: string;
+    message: string;
+  }>;
+}
+
+// ✅ Xóa nhiều đề thi.
+// Việc kiểm tra đề đang được dùng bởi phòng thi được thực hiện ở TeacherDashboard,
+// nơi đã có sẵn danh sách rooms của giáo viên nên không cần thêm truy vấn Firestore/index.
+export const deleteExams = async (
+  examIds: string[],
+  teacherId?: string
+): Promise<BulkDeleteExamsResult> => {
+  const uniqueExamIds = Array.from(new Set(examIds.filter(Boolean)));
+  const result: BulkDeleteExamsResult = {
+    deletedIds: [],
+    notFoundIds: [],
+    forbiddenIds: [],
+    failed: []
+  };
+
+  for (const examId of uniqueExamIds) {
+    try {
+      const examRef = doc(db, 'exams', examId);
+      const examSnap = await getDoc(examRef);
+
+      if (!examSnap.exists()) {
+        result.notFoundIds.push(examId);
+        continue;
+      }
+
+      const createdBy = examSnap.data().createdBy || '';
+      if (teacherId && createdBy !== teacherId) {
+        result.forbiddenIds.push(examId);
+        continue;
+      }
+
+      await deleteExam(examId);
+      result.deletedIds.push(examId);
+    } catch (error) {
+      result.failed.push({
+        examId,
+        message: error instanceof Error ? error.message : 'Không xác định được lỗi'
+      });
+    }
+  }
+
+  return result;
 };
 
 // ============ ROOM FUNCTIONS ============

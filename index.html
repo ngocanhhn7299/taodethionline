@@ -55,8 +55,38 @@
       src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">
     </script>
     <!-- ========== END MATHJAX ========== -->
-    
+    <!-- ========== MOBILE FIX ========== -->
+    <style>
+      /* MathJax: công thức dài tự cuộn trong khung, không đẩy vỡ trang */
+      mjx-container {
+        max-width: 100%;
+        overflow-x: auto;
+        overflow-y: hidden;
+      }
+      mjx-container[display="true"] {
+        margin: 0.5em 0 !important;
+      }
+
+      /* Chặn cuộn ngang toàn trang */
+      html, body, #root {
+        overflow-x: hidden;
+        max-width: 100%;
+      }
+
+      /* Ảnh trong đề thi không tràn khung */
+      img {
+        max-width: 100%;
+        height: auto;
+      }
+
+      /* iOS Safari: chặn tự phóng to khi chạm vào ô nhập đáp án */
+      input, textarea, select {
+        font-size: 16px;
+      }
+    </style>
+    <!-- ========== END MOBILE FIX ========== -->
   </head>
+
   <body>
     <div id="root"></div>
     <script type="module">

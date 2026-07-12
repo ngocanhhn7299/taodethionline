@@ -33,6 +33,8 @@ interface ParsedQuestion {
   correctAnswer: string | null;
   solution: string;
   images: ImageData[];
+  /** Hình ảnh nằm sau mục "Lời giải:" trong file Word. */
+  solutionImages: ImageData[];
 }
 
 interface ParagraphData {
@@ -653,7 +655,7 @@ function parsePart1(
   function flushCurrentQ() {
     if (!currentQ) return;
     if (contentBuffer.length > 0 && !currentQ.text) currentQ.text = contentBuffer.join(' ').trim();
-    if (solutionBuffer.length > 0) currentQ.solution = solutionBuffer.join(' ').trim();
+    if (solutionBuffer.length > 0) currentQ.solution = solutionBuffer.join('\n').trim();
     if (!currentQ.correctAnswer && currentUnderlinedLetters.length > 0) {
       const ans = currentUnderlinedLetters.find((l) => /^[A-D]$/i.test(l));
       if (ans) { currentQ.correctAnswer = ans.toUpperCase(); }
@@ -664,7 +666,7 @@ function parsePart1(
   function resetState(num: number, text: string, part1Para: ParagraphData) {
     currentQ = {
       number: num, globalIndex: 0, part: 1, type: 'multiple_choice' as QuestionType,
-      text: '', options: [] as QuestionOption[], correctAnswer: null, solution: '', images: [] as ImageData[],
+      text: '', options: [] as QuestionOption[], correctAnswer: null, solution: '', images: [] as ImageData[], solutionImages: [] as ImageData[],
     };
     collectingContent = true;
     inSolution = false;
@@ -706,6 +708,7 @@ function parsePart1(
     if (SOLUTION_RE.test(text)) {
       if (contentBuffer.length > 0 && !q.text) { q.text = contentBuffer.join(' ').trim(); contentBuffer = []; }
       collectingContent = false; inSolution = true; solutionBuffer = [];
+      if (para.imageRIds.length > 0) attachSolutionImages(q, para.imageRIds, images);
       continue;
     }
     const chonM = text.match(answerPattern);
@@ -785,7 +788,10 @@ function parsePart1(
       if (para.hasUnderline) currentUnderlinedLetters.push(...para.underlinedSegments);
     }
     if (inSolution && text && !/^H(?:ình|inh)\s*\d+/i.test(text)) solutionBuffer.push(text);
-    if (para.imageRIds.length > 0 && !inSolution) attachImages(q, para.imageRIds, images);
+    if (para.imageRIds.length > 0) {
+      if (inSolution) attachSolutionImages(q, para.imageRIds, images);
+      else attachImages(q, para.imageRIds, images);
+    }
   }
 
   flushCurrentQ();
@@ -822,7 +828,7 @@ function parsePart2(
   function flush() {
     if (!currentQ) return;
     if (contentBuffer.length > 0 && !currentQ.text) currentQ.text = contentBuffer.join(' ').trim();
-    if (solutionBuffer.length > 0) currentQ.solution = solutionBuffer.join(' ').trim();
+    if (solutionBuffer.length > 0) currentQ.solution = solutionBuffer.join('\n').trim();
     if (!currentQ.correctAnswer && trueStatements.size > 0) {
       currentQ.correctAnswer = Array.from(trueStatements).sort().join(',');
     }
@@ -838,7 +844,7 @@ function parsePart2(
     const qM = text.match(qPattern);
     if (qM) {
       flush();
-      currentQ = { number: parseInt(qM[1]), globalIndex: 0, part: 2, type: 'true_false' as QuestionType, text: '', options: [] as QuestionOption[], correctAnswer: null, solution: '', images: [] as ImageData[] };
+      currentQ = { number: parseInt(qM[1]), globalIndex: 0, part: 2, type: 'true_false' as QuestionType, text: '', options: [] as QuestionOption[], correctAnswer: null, solution: '', images: [] as ImageData[], solutionImages: [] as ImageData[] };
       collectingContent = true; inSolution = false;
       contentBuffer = qM[2].trim() ? [qM[2].trim()] : [];
       solutionBuffer = []; trueStatements = new Set();
@@ -851,6 +857,7 @@ function parsePart2(
     if (SOLUTION_RE.test(text)) {
       if (contentBuffer.length > 0 && !currentQ.text) { currentQ.text = contentBuffer.join(' ').trim(); contentBuffer = []; }
       collectingContent = false; inSolution = true; solutionBuffer = [];
+      if (para.imageRIds.length > 0) attachSolutionImages(currentQ, para.imageRIds, images);
       continue;
     }
 
@@ -878,7 +885,10 @@ function parsePart2(
       if (!/^H(?:ình|inh)\s*\d+/i.test(text)) contentBuffer.push(text);
     }
     if (inSolution && text && !/^H(?:ình|inh)\s*\d+/i.test(text)) solutionBuffer.push(text);
-    if (para.imageRIds.length > 0 && !inSolution) attachImages(currentQ, para.imageRIds, images);
+    if (para.imageRIds.length > 0) {
+      if (inSolution) attachSolutionImages(currentQ, para.imageRIds, images);
+      else attachImages(currentQ, para.imageRIds, images);
+    }
   }
 
   flush();
@@ -911,7 +921,7 @@ function parsePart3(
   function flush() {
     if (!currentQ) return;
     if (contentBuffer.length > 0) currentQ.text = contentBuffer.join(' ').trim();
-    if (solutionBuffer.length > 0) currentQ.solution = solutionBuffer.join(' ').trim();
+    if (solutionBuffer.length > 0) currentQ.solution = solutionBuffer.join('\n').trim();
     if (!currentQ.correctAnswer) { currentQ.type = 'writing'; currentQ.part = 4; }
     if (currentQ.text) questions.push(currentQ);
   }
@@ -925,7 +935,7 @@ function parsePart3(
     const qM = text.match(qPattern);
     if (qM) {
       flush();
-      currentQ = { number: parseInt(qM[1]), globalIndex: 0, part: 3, type: 'short_answer' as QuestionType, text: '', options: [] as QuestionOption[], correctAnswer: null, solution: '', images: [] as ImageData[] };
+      currentQ = { number: parseInt(qM[1]), globalIndex: 0, part: 3, type: 'short_answer' as QuestionType, text: '', options: [] as QuestionOption[], correctAnswer: null, solution: '', images: [] as ImageData[], solutionImages: [] as ImageData[] };
       collectingContent = true;
       contentBuffer = qM[2].trim() ? [qM[2].trim()] : [];
       solutionBuffer = [];
@@ -937,6 +947,7 @@ function parsePart3(
     if (SOLUTION_RE.test(text)) {
       if (contentBuffer.length > 0) { currentQ.text = contentBuffer.join(' ').trim(); contentBuffer = []; }
       collectingContent = false; solutionBuffer = [];
+      if (para.imageRIds.length > 0) attachSolutionImages(currentQ, para.imageRIds, images);
       continue;
     }
 
@@ -950,7 +961,10 @@ function parsePart3(
     if (!collectingContent && text && !/^C(?:âu|au)\s*\d+/.test(text)) {
       if (!/^H(?:ình|inh)\s*\d+/i.test(text) && !ansPattern.test(text)) solutionBuffer.push(text);
     }
-    if (para.imageRIds.length > 0) attachImages(currentQ, para.imageRIds, images);
+    if (para.imageRIds.length > 0) {
+      if (collectingContent) attachImages(currentQ, para.imageRIds, images);
+      else attachSolutionImages(currentQ, para.imageRIds, images);
+    }
   }
   flush();
   questions.sort((a, b) => a.number - b.number);
@@ -960,10 +974,22 @@ function parsePart3(
 // ============================================================
 // HELPERS
 // ============================================================
+function findImageByRelation(rId: string, images: ImageData[]): ImageData | undefined {
+  return images.find((im) => im.rId === rId)
+    || images.find((im) => im.filename && rId.includes(im.filename));
+}
+
 function attachImages(q: ParsedQuestion, rIds: string[], images: ImageData[]): void {
   for (const rId of rIds) {
-    const img = images.find((im) => im.rId === rId) || images.find((im) => im.filename && rId.includes(im.filename));
+    const img = findImageByRelation(rId, images);
     if (img && !q.images.find((im) => im.id === img.id)) q.images.push(img);
+  }
+}
+
+function attachSolutionImages(q: ParsedQuestion, rIds: string[], images: ImageData[]): void {
+  for (const rId of rIds) {
+    const img = findImageByRelation(rId, images);
+    if (img && !q.solutionImages.find((im) => im.id === img.id)) q.solutionImages.push(img);
   }
 }
 
@@ -976,7 +1002,8 @@ function toQuestion(pq: ParsedQuestion, globalIndex: number): Question {
     correctAnswer: pq.correctAnswer,
     part: `PHẦN ${pq.part}`,
     images: pq.images,
-    solution: pq.solution,
+    solution: escapeHtmlPreserveLaTeX(pq.solution),
+    solutionImages: pq.solutionImages,
     section: { letter: String(pq.part), name: getPartName(pq.part), points: '' },
   };
 }

@@ -26,6 +26,7 @@ export interface ImageData {
   base64: string;
   contentType: string;
   rId?: string;
+  tikzSource?: string;
 }
 
 // ============ USER ============
@@ -151,6 +152,8 @@ export interface Question {
   part?: string;
   passage?: string;
   solution?: string;
+  /** Hình ảnh nằm trong phần lời giải của câu hỏi. */
+  solutionImages?: ImageData[];
   images?: ImageData[];
   tfStatements?: { [key: string]: string };
   knowledgeUnitId?: string;

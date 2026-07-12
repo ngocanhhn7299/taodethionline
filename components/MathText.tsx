@@ -1,16 +1,11 @@
-import React, { useEffect, useRef, memo } from 'react';
+import React, { memo, useEffect, useRef } from 'react';
 
 /**
- * MathText - Component render LaTeX và GIỮ NGUYÊN output
- * 
- * Trick: Dùng ref để set innerHTML trực tiếp, không để React control
- * → MathJax output KHÔNG bị ghi đè khi parent re-render (timer, state change...)
- * 
- * Sử dụng:
- * <MathText html={question.text} className="text-gray-800" block />
- * <MathText html={option.text} className="text-sm" />
+ * Hiển thị HTML/LaTeX bằng MathJax và giữ nguyên xuống dòng trong văn bản.
+ *
+ * `whiteSpace: pre-wrap` làm các ký tự \n đã lưu từ file Word được hiển thị
+ * thành từng dòng mà không chèn <br> vào bên trong công thức LaTeX.
  */
-
 declare global {
   interface Window {
     MathJax?: {
@@ -21,49 +16,60 @@ declare global {
 }
 
 interface MathTextProps {
-  html: string;
+  /** Prop đang dùng trong các màn hình mới. */
+  html?: string;
+  /** Giữ tương thích với các component cũ dùng prop content. */
+  content?: string;
   className?: string;
   block?: boolean;
 }
 
-const MathText: React.FC<MathTextProps> = ({ html, className = '', block = false }) => {
+const MathText: React.FC<MathTextProps> = ({
+  html,
+  content,
+  className = '',
+  block = false
+}) => {
+  const value = html ?? content ?? '';
   const ref = useRef<HTMLElement>(null);
   const initialized = useRef(false);
   const contentHash = useRef('');
 
   useEffect(() => {
     if (!ref.current) return;
-    
-    // Chỉ update nếu content thay đổi
-    const newHash = html || '';
-    if (initialized.current && contentHash.current === newHash) {
-      return; // Đã render rồi, skip để giữ MathJax output
-    }
-    
-    // Set innerHTML trực tiếp qua ref (KHÔNG dùng dangerouslySetInnerHTML)
-    ref.current.innerHTML = newHash;
-    contentHash.current = newHash;
-    
-    // Typeset MathJax
-    const timer = setTimeout(() => {
-      if (ref.current && window.MathJax?.typesetPromise) {
-        // Clear trước để tránh duplicate
-        window.MathJax.typesetClear?.([ref.current]);
-        
-        window.MathJax.typesetPromise([ref.current])
-          .then(() => {
-            initialized.current = true;
-          })
-          .catch(err => console.error('MathText typeset error:', err));
-      }
+
+    const newContent = value;
+    if (initialized.current && contentHash.current === newContent) return;
+
+    ref.current.innerHTML = newContent;
+    contentHash.current = newContent;
+
+    const timer = window.setTimeout(() => {
+      if (!ref.current || !window.MathJax?.typesetPromise) return;
+
+      window.MathJax.typesetClear?.([ref.current]);
+      window.MathJax.typesetPromise([ref.current])
+        .then(() => {
+          initialized.current = true;
+        })
+        .catch((error) => console.error('MathText typeset error:', error));
     }, 10);
 
-    return () => clearTimeout(timer);
-  }, [html]);
+    return () => window.clearTimeout(timer);
+  }, [value]);
 
-  // Render element TRỐNG - content được set qua ref
   const Tag = block ? 'div' : 'span';
-  return <Tag ref={ref as any} className={className} />;
+
+  return (
+    <Tag
+      ref={ref as any}
+      className={className}
+      style={{
+        whiteSpace: block ? 'pre-wrap' : 'normal',
+        overflowWrap: 'anywhere'
+      }}
+    />
+  );
 };
 
 export default memo(MathText);
